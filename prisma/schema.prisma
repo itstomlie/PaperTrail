@@ -3,8 +3,9 @@ generator client {
 }
 
 datasource db {
-  provider = "sqlite"
-  url      = env("DATABASE_URL")
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
 }
 
 model Project {
@@ -13,7 +14,7 @@ model Project {
   description          String?
   icon                 String?           // Lucide icon name
   color                String?           // Hex color for project
-  customFieldTemplates String            @default("[]") // JSON array of field definitions
+  customFieldTemplates String            @default("[]") @db.Text // JSON array of field definitions
   citationStyle        String            @default("bibtex") // bibtex | ieee | chicago
   sortOrder            Int               @default(0)
   createdAt            DateTime          @default(now())
@@ -27,9 +28,9 @@ model Resource {
   resourceType String            @default("paper") // paper | article | web_link | image | dataset | book
   title        String
   url          String?
-  notes        String?           // Markdown content
-  customFields String            @default("{}") // JSON key-value pairs
-  typeFields   String            @default("{}") // JSON — type-specific structured fields
+  notes        String?           @db.Text // Markdown content
+  customFields String            @default("{}") @db.Text // JSON key-value pairs
+  typeFields   String            @default("{}") @db.Text // JSON — type-specific structured fields
   thumbnailUrl String?
   createdAt    DateTime          @default(now())
   updatedAt    DateTime          @updatedAt
@@ -71,7 +72,7 @@ model AiConversation {
   scope      String   // "resource" | "project"
   resourceId String?
   projectId  String?
-  messages   String   @default("[]") // JSON array of { role, content, timestamp }
+  messages   String   @default("[]") @db.Text // JSON array of { role, content, timestamp }
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
   resource   Resource? @relation(fields: [resourceId], references: [id], onDelete: Cascade)
