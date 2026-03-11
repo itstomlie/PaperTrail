@@ -93,7 +93,7 @@ ${styleInstruction}`;
           content: `Generate a ${citationStyle.toUpperCase()} citation for the following resource:\n\n${metadata.join("\n")}`,
         },
       ],
-      temperature: 0.1,
+      temperature: 1,
     });
 
     const citation =

@@ -22,6 +22,13 @@ import {
   SheetDescription,
 } from "@/components/ui/sheet";
 import { Separator } from "@/components/ui/separator";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { toast } from "sonner";
 import {
   RESOURCE_TYPES,
@@ -56,6 +63,7 @@ export function AddResourceSheet({
 
   const [title, setTitle] = React.useState("");
   const [url, setUrl] = React.useState("");
+  const [pdfUrl, setPdfUrl] = React.useState("");
   const [authors, setAuthors] = React.useState("");
   const [notes, setNotes] = React.useState("");
   const [saving, setSaving] = React.useState(false);
@@ -82,6 +90,7 @@ export function AddResourceSheet({
     setDetecting(false);
     setTitle("");
     setUrl("");
+    setPdfUrl("");
     setAuthors("");
     setNotes("");
     setSaving(false);
@@ -227,6 +236,9 @@ export function AddResourceSheet({
 
     const typeFields: Record<string, unknown> = {};
     if (authors) typeFields.authors = authors;
+    if (pdfUrl.trim() && (resourceType === "paper" || resourceType === "article" || resourceType === "book")) {
+      typeFields.pdfUrl = pdfUrl.trim();
+    }
     if (resourceType === "image") typeFields.imageUrl = imageUrl || url;
     // Include links
     const filteredLinks = links.filter((l) => l.url.trim());
@@ -287,6 +299,24 @@ export function AddResourceSheet({
     setLinks((prev) =>
       prev.map((l, i) => (i === index ? { ...l, [field]: value } : l)),
     );
+
+  const saveRef = React.useRef(handleSave);
+  React.useEffect(() => {
+    saveRef.current = handleSave;
+  });
+
+  // Keyboard shortcut: Ctrl/Cmd + Enter to save
+  React.useEffect(() => {
+    if (!open) return;
+    const handler = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
+        e.preventDefault();
+        saveRef.current();
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [open]);
 
   return (
     <Sheet
@@ -410,6 +440,21 @@ export function AddResourceSheet({
             />
           </div>
 
+          {/* PDF URL — show for paper, article, book */}
+          {(resourceType === "paper" ||
+            resourceType === "article" ||
+            resourceType === "book") && (
+            <div className="space-y-1.5">
+              <Label className="text-xs">PDF URL</Label>
+              <Input
+                value={pdfUrl}
+                onChange={(e) => setPdfUrl(e.target.value)}
+                placeholder="https://...pdf"
+                className="h-8 text-sm"
+              />
+            </div>
+          )}
+
           {/* Additional Links */}
           <div className="space-y-2">
             <div className="flex items-center justify-between">
@@ -504,14 +549,35 @@ export function AddResourceSheet({
                 ) : null}
                 <div className="flex gap-1.5 items-start">
                   {!cf.label && (
-                    <Input
-                      value={cf.key}
-                      onChange={(e) =>
-                        updateCustomField(i, "key", e.target.value)
-                      }
-                      placeholder="Field name"
-                      className="h-7 text-xs flex-1"
-                    />
+                    <>
+                      <Input
+                        value={cf.key}
+                        onChange={(e) =>
+                          updateCustomField(i, "key", e.target.value)
+                        }
+                        placeholder="Field name"
+                        className="h-7 text-xs w-28"
+                      />
+                      <Select
+                        value={cf.type || "text"}
+                        onValueChange={(val) =>
+                          setCustomFields((prev) =>
+                            prev.map((f, j) =>
+                              j === i ? { ...f, type: val } : f,
+                            ),
+                          )
+                        }
+                      >
+                        <SelectTrigger className="h-7 w-24 text-xs">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="text">Text</SelectItem>
+                          <SelectItem value="long_text">Long</SelectItem>
+                          <SelectItem value="number">Number</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </>
                   )}
                   {cf.type === "long_text" ? (
                     <Textarea
@@ -577,6 +643,13 @@ export function AddResourceSheet({
               Cancel
             </Button>
           </div>
+          <p className="text-xs text-muted-foreground text-center">
+            Tip: Press{" "}
+            <kbd className="rounded border px-1 py-0.5 text-xs font-mono bg-muted">⌘</kbd>
+            {" "}+{" "}
+            <kbd className="rounded border px-1 py-0.5 text-xs font-mono bg-muted">↵</kbd>
+            {" "}to save quickly
+          </p>
         </div>
       </SheetContent>
     </Sheet>

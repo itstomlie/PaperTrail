@@ -75,9 +75,10 @@ interface ResourceData {
 interface Props {
   resource: ResourceData;
   allResources: { id: string; title: string }[];
+  defaultCitationStyle?: string;
 }
 
-export function ResourceDetailClient({ resource, allResources }: Props) {
+export function ResourceDetailClient({ resource, allResources, defaultCitationStyle = "bibtex" }: Props) {
   const router = useRouter();
   const [notes, setNotes] = React.useState(resource.notes || "");
   const [notesMode, setNotesMode] = React.useState<"edit" | "preview">(
@@ -89,6 +90,9 @@ export function ResourceDetailClient({ resource, allResources }: Props) {
   const [currentReference, setCurrentReference] = React.useState<string | null>(
     null,
   );
+  const [copyFormat, setCopyFormat] = React.useState<string>(defaultCitationStyle);
+  const [formattedPreview, setFormattedPreview] = React.useState<Record<string, string>>({});
+  const [formattingFormat, setFormattingFormat] = React.useState<string | null>(null);
 
   const rt = resource.resourceType as ResourceType;
   const meta = TYPE_META[rt];
@@ -157,31 +161,77 @@ export function ResourceDetailClient({ resource, allResources }: Props) {
     setGeneratingCitation(false);
   };
 
-  const copyReference = async (format: string) => {
-    const ref = tf.reference;
+  const CITATION_FORMATS = [
+    { key: "bibtex", label: "BibTeX" },
+    { key: "ieee", label: "IEEE" },
+    { key: "apa", label: "APA" },
+  ];
+
+  // Lazy: format only when user clicks a format button
+  const handleSelectFormat = async (fmt: string) => {
+    setCopyFormat(fmt);
+    // Already have it cached?
+    if (formattedPreview[fmt]) return;
+
+    // Need the raw BibTeX reference first
+    let ref = currentReference;
     if (!ref) {
-      toast.error("No reference data available");
-      return;
+      setGeneratingCitation(true);
+      try {
+        const res = await fetch("/api/ai/generate-citation", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ resourceId: resource.id, citationStyle: "bibtex" }),
+        });
+        if (res.ok) {
+          const data = await res.json();
+          ref = data.citation;
+          setCurrentReference(ref);
+          toast.success(data.cached ? "Citation loaded" : "Citation generated!");
+        } else {
+          toast.error("Failed to generate citation");
+          setGeneratingCitation(false);
+          return;
+        }
+      } catch {
+        toast.error("Failed to generate citation");
+        setGeneratingCitation(false);
+        return;
+      }
+      setGeneratingCitation(false);
     }
+
+    // Now format
+    setFormattingFormat(fmt);
     try {
       const { Cite } = await import("@citation-js/core");
       await import("@citation-js/plugin-bibtex");
       await import("@citation-js/plugin-csl");
       const cite = new Cite(ref);
-      let output: string;
-      if (format === "bibtex") output = cite.format("bibtex");
-      else
-        output = cite.format("bibliography", {
-          format: "text",
-          template: format,
-          lang: "en-US",
-        });
-      await navigator.clipboard.writeText(output);
-      toast.success(`Copied as ${format.toUpperCase()}`);
+      let out: string;
+      if (fmt === "bibtex") {
+        out = cite.format("bibtex");
+      } else {
+        out = cite.format("bibliography", { format: "text", template: fmt, lang: "en-US" });
+      }
+      setFormattedPreview((prev) => ({ ...prev, [fmt]: out }));
     } catch {
-      await navigator.clipboard.writeText(ref);
-      toast.success("Copied raw reference");
+      setFormattedPreview((prev) => ({ ...prev, [fmt]: ref! }));
+    } finally {
+      setFormattingFormat(null);
     }
+  };
+
+  const copyReference = async () => {
+    const preview = formattedPreview[copyFormat] ?? currentReference;
+    if (!preview) {
+      // Nothing cached yet for this format – generate it first
+      await handleSelectFormat(copyFormat);
+      return;
+    }
+    await navigator.clipboard.writeText(preview);
+    const label = CITATION_FORMATS.find(f => f.key === copyFormat)?.label ?? copyFormat.toUpperCase();
+    toast.success(`Copied as ${label}`);
   };
 
   const resolveWikiLinks = (text: string) =>
@@ -315,39 +365,42 @@ export function ResourceDetailClient({ resource, allResources }: Props) {
               <CardTitle className="text-sm font-medium text-muted-foreground">
                 Reference
               </CardTitle>
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="h-7 gap-1 text-xs"
-                  >
-                    <Copy className="h-3 w-3" /> Copy as{" "}
-                    <ChevronDown className="h-3 w-3" />
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end">
-                  {[
-                    { key: "bibtex", label: "BibTeX" },
-                    { key: "ieee", label: "IEEE" },
-                    { key: "apa", label: "APA 7th" },
-                  ].map((fmt) => (
-                    <DropdownMenuItem
+              <div className="flex items-center gap-1.5">
+                <div className="flex rounded-md border text-xs overflow-hidden">
+                  {CITATION_FORMATS.map((fmt) => (
+                    <button
                       key={fmt.key}
-                      onClick={() => copyReference(fmt.key)}
+                      onClick={() => handleSelectFormat(fmt.key)}
+                      className={`px-2 py-1 transition-colors ${
+                        copyFormat === fmt.key
+                          ? "bg-primary text-primary-foreground"
+                          : "hover:bg-muted text-muted-foreground"
+                      }`}
                     >
-                      {fmt.label}
-                    </DropdownMenuItem>
+                      {formattingFormat === fmt.key ? "..." : fmt.label}
+                    </button>
                   ))}
-                </DropdownMenuContent>
-              </DropdownMenu>
+                </div>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 gap-1 text-xs"
+                  onClick={copyReference}
+                >
+                  <Copy className="h-3 w-3" /> Copy
+                </Button>
+              </div>
             </div>
           </CardHeader>
           <CardContent>
-            <pre className="overflow-x-auto whitespace-pre-wrap rounded-md bg-muted p-3 text-xs font-mono">
-              {currentReference}
-            </pre>
-          </CardContent>
+              {formattingFormat === copyFormat ? (
+                <p className="text-xs text-muted-foreground italic">Formatting...</p>
+              ) : (
+                <pre className="overflow-x-auto whitespace-pre-wrap rounded-md bg-muted p-3 text-xs font-mono">
+                  {formattedPreview[copyFormat] ?? currentReference ?? "Click a format above to generate"}
+                </pre>
+              )}
+            </CardContent>
         </Card>,
       );
     } else {

@@ -36,6 +36,7 @@ export default async function ProjectDetailPage({
     tags: pr.resource.tags.map((rt) => rt.tag),
     customFields: JSON.parse((pr.resource.customFields as string) || "{}"),
     used: pr.used,
+    starred: pr.starred,
   }));
 
   return (

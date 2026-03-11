@@ -65,8 +65,8 @@ export default function EditResourcePage({
 
   // Custom fields
   const [customFields, setCustomFields] = React.useState<
-    { key: string; value: string }[]
-  >([]);
+    { key: string; value: string; type?: string }[]
+  >();
 
   // Additional links
   const [links, setLinks] = React.useState<{ label: string; url: string }[]>(
@@ -139,6 +139,7 @@ export default function EditResourcePage({
         Object.entries(cf).map(([key, value]) => ({
           key,
           value: String(value),
+          type: "text",
         })),
       );
       setLoading(false);
@@ -165,7 +166,7 @@ export default function EditResourcePage({
     setSaving(true);
     // Build custom fields
     const cfObj: Record<string, string> = {};
-    for (const f of customFields) {
+    for (const f of (customFields ?? [])) {
       if (f.key.trim()) cfObj[f.key.trim()] = f.value;
     }
 
@@ -179,6 +180,7 @@ export default function EditResourcePage({
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
+        resourceType,
         title: title.trim(),
         url: url.trim() || null,
         notes: notes.trim() || null,
@@ -196,6 +198,23 @@ export default function EditResourcePage({
     } else toast.error("Failed to save");
     setSaving(false);
   };
+
+  const saveRef = React.useRef(handleSave);
+  React.useEffect(() => {
+    saveRef.current = handleSave;
+  });
+
+  // Keyboard shortcut: Cmd/Ctrl+Enter to save
+  React.useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
+        e.preventDefault();
+        saveRef.current();
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, []);
 
   if (loading)
     return (
@@ -219,12 +238,28 @@ export default function EditResourcePage({
         </Button>
         <div>
           <h1 className="text-2xl font-bold tracking-tight">Edit Resource</h1>
-          <Badge
-            variant="outline"
-            style={{ color: meta.color, borderColor: meta.color }}
-          >
-            <meta.icon className="mr-1 h-3 w-3" /> {meta.label}
-          </Badge>
+          {/* Resource type selector */}
+          <div className="flex flex-wrap gap-1 mt-2">
+            {RESOURCE_TYPES.map((rt) => {
+              const rm = TYPE_META[rt];
+              const isActive = resourceType === rt;
+              return (
+                <button
+                  key={rt}
+                  type="button"
+                  onClick={() => setResourceType(rt)}
+                  className={`inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium transition-colors border ${
+                    isActive
+                      ? "border-primary bg-primary/10 text-primary"
+                      : "border-transparent bg-muted/50 text-muted-foreground hover:bg-muted"
+                  }`}
+                >
+                  <rm.icon className="h-3 w-3" style={{ color: isActive ? undefined : rm.color }} />
+                  {rm.label}
+                </button>
+              );
+            })}
+          </div>
         </div>
       </div>
 
@@ -313,39 +348,6 @@ export default function EditResourcePage({
                 />
               </div>
             </div>
-            {resourceType === "paper" && (
-              <>
-                <div className="space-y-2">
-                  <Label>Approach</Label>
-                  <Textarea
-                    value={String(tf.approach || "")}
-                    onChange={(e) =>
-                      updateTf("approach", e.target.value || null)
-                    }
-                    rows={3}
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label>Key Contributions</Label>
-                  <Textarea
-                    value={String(tf.keyContributions || "")}
-                    onChange={(e) =>
-                      updateTf("keyContributions", e.target.value || null)
-                    }
-                    rows={3}
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label>Datasets</Label>
-                  <Input
-                    value={String(tf.datasets || "")}
-                    onChange={(e) =>
-                      updateTf("datasets", e.target.value || null)
-                    }
-                  />
-                </div>
-              </>
-            )}
             {resourceType === "book" && (
               <div className="grid grid-cols-3 gap-4">
                 <div className="space-y-2">
@@ -380,15 +382,6 @@ export default function EditResourcePage({
               <Input
                 value={String(tf.pdfUrl || "")}
                 onChange={(e) => updateTf("pdfUrl", e.target.value || null)}
-              />
-            </div>
-            <div className="space-y-2">
-              <Label>Reference</Label>
-              <Textarea
-                value={String(tf.reference || "")}
-                onChange={(e) => updateTf("reference", e.target.value || null)}
-                rows={3}
-                className="font-mono text-sm"
               />
             </div>
           </>
@@ -554,24 +547,24 @@ export default function EditResourcePage({
             size="sm"
             className="gap-1 h-7 text-xs"
             onClick={() =>
-              setCustomFields((prev) => [...prev, { key: "", value: "" }])
+              setCustomFields((prev) => [...(prev ?? []), { key: "", value: "", type: "text" }])
             }
           >
             <Plus className="h-3 w-3" /> Add Field
           </Button>
         </div>
-        {customFields.length === 0 && (
+        {(customFields ?? []).length === 0 && (
           <p className="text-sm text-muted-foreground">
             No custom fields. Click &quot;Add Field&quot; to add one.
           </p>
         )}
-        {customFields.map((field, i) => (
-          <div key={i} className="flex items-center gap-2">
+        {(customFields ?? []).map((field, i) => (
+          <div key={i} className="flex items-start gap-2">
             <Input
               value={field.key}
               onChange={(e) =>
                 setCustomFields((prev) =>
-                  prev.map((f, j) =>
+                  (prev ?? []).map((f, j) =>
                     j === i ? { ...f, key: e.target.value } : f,
                   ),
                 )
@@ -579,25 +572,61 @@ export default function EditResourcePage({
               placeholder="Field name"
               className="w-1/3"
             />
-            <Input
-              value={field.value}
-              onChange={(e) =>
+            <Select
+              value={field.type || "text"}
+              onValueChange={(val) =>
                 setCustomFields((prev) =>
-                  prev.map((f, j) =>
-                    j === i ? { ...f, value: e.target.value } : f,
+                  (prev ?? []).map((f, j) =>
+                    j === i ? { ...f, type: val } : f,
                   ),
                 )
               }
-              placeholder="Value"
-              className="flex-1"
-            />
+            >
+              <SelectTrigger className="w-28 h-9 text-xs">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="text">Text</SelectItem>
+                <SelectItem value="long_text">Long text</SelectItem>
+                <SelectItem value="number">Number</SelectItem>
+              </SelectContent>
+            </Select>
+            {field.type === "long_text" ? (
+              <Textarea
+                value={field.value}
+                onChange={(e) =>
+                  setCustomFields((prev) =>
+                    (prev ?? []).map((f, j) =>
+                      j === i ? { ...f, value: e.target.value } : f,
+                    ),
+                  )
+                }
+                placeholder="Value"
+                rows={3}
+                className="flex-1 text-sm"
+              />
+            ) : (
+              <Input
+                value={field.value}
+                type={field.type === "number" ? "number" : "text"}
+                onChange={(e) =>
+                  setCustomFields((prev) =>
+                    (prev ?? []).map((f, j) =>
+                      j === i ? { ...f, value: e.target.value } : f,
+                    ),
+                  )
+                }
+                placeholder="Value"
+                className="flex-1"
+              />
+            )}
             <Button
               type="button"
               variant="ghost"
               size="icon"
-              className="h-8 w-8 shrink-0 text-destructive"
+              className="h-8 w-8 shrink-0 text-destructive mt-0.5"
               onClick={() =>
-                setCustomFields((prev) => prev.filter((_, j) => j !== i))
+                setCustomFields((prev) => (prev ?? []).filter((_, j) => j !== i))
               }
             >
               <Trash2 className="h-3.5 w-3.5" />
@@ -671,6 +700,13 @@ export default function EditResourcePage({
           {saving ? "Saving..." : "Save Changes"}
         </Button>
       </div>
+      <p className="text-xs text-muted-foreground text-right">
+        Tip: Press{" "}
+        <kbd className="rounded border px-1 py-0.5 text-xs font-mono bg-muted">⌘</kbd>
+        {" "}+{" "}
+        <kbd className="rounded border px-1 py-0.5 text-xs font-mono bg-muted">↵</kbd>
+        {" "}to save
+      </p>
     </div>
   );
 }

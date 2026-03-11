@@ -23,6 +23,9 @@ export default async function ResourceDetailPage({
     select: { id: true, title: true },
   });
 
+  const defaultCitationStyle =
+    resource.projects[0]?.project?.citationStyle ?? "bibtex";
+
   return (
     <ResourceDetailClient
       resource={{
@@ -31,6 +34,7 @@ export default async function ResourceDetailPage({
         projects: resource.projects.map((pr) => pr.project),
       }}
       allResources={allResources}
+      defaultCitationStyle={defaultCitationStyle}
     />
   );
 }

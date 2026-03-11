@@ -337,7 +337,7 @@ export async function POST(request: Request) {
     const completion = await openai.chat.completions.create({
       model: "gpt-5-mini",
       messages,
-      temperature: 0.1,
+      temperature: 1,
     });
 
     const answer =

@@ -18,11 +18,13 @@ import {
   BookOpen,
   Users,
   Calendar,
-  Check,
-  Copy,
   Link2,
   Download,
   Loader2,
+  Star,
+  ChevronDown,
+  Copy,
+  Trash2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -40,6 +42,7 @@ import {
   DropdownMenu,
   DropdownMenuCheckboxItem,
   DropdownMenuContent,
+  DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
@@ -69,6 +72,7 @@ interface ColumnDef {
 }
 
 const ALL_COLUMNS: ColumnDef[] = [
+  { key: "starred", label: "Fav", defaultVisible: true },
   { key: "used", label: "Used", defaultVisible: true },
   { key: "type", label: "Type", defaultVisible: true },
   { key: "title", label: "Title", defaultVisible: true },
@@ -113,6 +117,7 @@ interface ResourceItem {
   customFields: Record<string, unknown>;
   createdAt: string | Date;
   used?: boolean;
+  starred?: boolean;
 }
 
 interface Props {
@@ -138,6 +143,12 @@ interface Props {
 
 export function ProjectDetailClient({ project, resources, allTags }: Props) {
   const router = useRouter();
+  const [isMounted, setIsMounted] = React.useState(false);
+
+  React.useEffect(() => {
+    setIsMounted(true);
+  }, []);
+
   const [search, setSearch] = React.useState("");
   const [typeFilter, setTypeFilter] = React.useState<string>("all");
   const [sortField, setSortField] = React.useState<string>("createdAt");
@@ -186,6 +197,41 @@ export function ProjectDetailClient({ project, resources, allTags }: Props) {
     } catch {
       setUsedMap((prev) => ({ ...prev, [resourceId]: !newVal }));
       toast.error("Failed to toggle used status");
+    }
+  };
+
+  // Starred status tracking
+  const [starredMap, setStarredMap] = React.useState<Record<string, boolean>>(
+    () => {
+      const map: Record<string, boolean> = {};
+      resources.forEach((r) => {
+        map[r.id] = r.starred ?? false;
+      });
+      return map;
+    },
+  );
+
+  const toggleStarred = async (resourceId: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    const newVal = !starredMap[resourceId];
+    setStarredMap((prev) => ({ ...prev, [resourceId]: newVal }));
+    try {
+      const res = await fetch("/api/project-resources/toggle-starred", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          projectId: project.id,
+          resourceId,
+          starred: newVal,
+        }),
+      });
+      if (!res.ok) {
+        setStarredMap((prev) => ({ ...prev, [resourceId]: !newVal }));
+        toast.error("Failed to toggle favorite status");
+      }
+    } catch {
+      setStarredMap((prev) => ({ ...prev, [resourceId]: !newVal }));
+      toast.error("Failed to toggle favorite status");
     }
   };
 
@@ -268,10 +314,18 @@ export function ProjectDetailClient({ project, resources, allTags }: Props) {
       });
     }
     result.sort((a, b) => {
+      // Always put starred items first unless we're explicitly sorting by starred (which does it natively)
+      if (sortField !== "starred" && starredMap[a.id] !== starredMap[b.id]) {
+        return starredMap[a.id] ? -1 : 1;
+      }
+
       const tfA = getTypeFields<Record<string, unknown>>(a.typeFields);
       const tfB = getTypeFields<Record<string, unknown>>(b.typeFields);
       let cmp = 0;
       switch (sortField) {
+        case "starred":
+          cmp = (starredMap[a.id] ? 1 : 0) - (starredMap[b.id] ? 1 : 0);
+          break;
         case "used":
           cmp = (usedMap[a.id] ? 1 : 0) - (usedMap[b.id] ? 1 : 0);
           break;
@@ -305,7 +359,7 @@ export function ProjectDetailClient({ project, resources, allTags }: Props) {
       return sortDir === "asc" ? cmp : -cmp;
     });
     return result;
-  }, [resources, typeFilter, search, sortField, sortDir, usedMap]);
+  }, [resources, typeFilter, search, sortField, sortDir, usedMap, starredMap]);
 
   const toggleSort = (field: string) => {
     if (sortField === field) setSortDir(sortDir === "asc" ? "desc" : "asc");
@@ -330,6 +384,28 @@ export function ProjectDetailClient({ project, resources, allTags }: Props) {
   );
 
   const isCol = (key: string) => visibleColumns.has(key);
+
+  if (!isMounted) {
+    return null;
+  }
+
+  const handleDeleteResource = async (resourceId: string) => {
+    if (!confirm("Are you sure you want to delete this resource?")) return;
+    try {
+      const res = await fetch(`/api/resources/${resourceId}`, {
+        method: "DELETE",
+      });
+      if (res.ok) {
+        toast.success("Resource deleted");
+        setSelectedResource(null);
+        router.refresh();
+      } else {
+        toast.error("Failed to delete resource");
+      }
+    } catch {
+      toast.error("Failed to delete resource");
+    }
+  };
 
   return (
     <div className="space-y-6">
@@ -514,6 +590,11 @@ export function ProjectDetailClient({ project, resources, allTags }: Props) {
           <Table>
             <TableHeader>
               <TableRow>
+                {isCol("starred") && (
+                  <TableHead className="w-10">
+                    <SortHeader field="starred" label="" />
+                  </TableHead>
+                )}
                 {isCol("used") && (
                   <TableHead className="w-10">
                     <SortHeader field="used" label="Used" />
@@ -572,6 +653,28 @@ export function ProjectDetailClient({ project, resources, allTags }: Props) {
                     className="cursor-pointer"
                     onClick={() => setSelectedResource(resource)}
                   >
+                    {isCol("starred") && (
+                      <TableCell>
+                        <button
+                          onClick={(e) => toggleStarred(resource.id, e)}
+                          className="h-6 w-6 flex items-center justify-center text-muted-foreground hover:text-yellow-500 transition-colors"
+                        >
+                          <Star
+                            className="h-4 w-4"
+                            fill={
+                              starredMap[resource.id]
+                                ? "rgb(234 179 8)"
+                                : "none"
+                            }
+                            color={
+                              starredMap[resource.id]
+                                ? "rgb(234 179 8)"
+                                : "currentColor"
+                            }
+                          />
+                        </button>
+                      </TableCell>
+                    )}
                     {isCol("used") && (
                       <TableCell>
                         <button
@@ -697,9 +800,25 @@ export function ProjectDetailClient({ project, resources, allTags }: Props) {
             return (
               <Card
                 key={resource.id}
-                className="cursor-pointer transition-all hover:shadow-md hover:border-primary/30 overflow-hidden"
+                className={`cursor-pointer transition-all hover:shadow-md hover:border-primary/30 overflow-hidden relative ${
+                  starredMap[resource.id] ? "border-yellow-500/50" : ""
+                }`}
                 onClick={() => setSelectedResource(resource)}
               >
+                <div
+                  className="absolute top-1 right-1 z-10 p-1.5 rounded-full bg-background/80 hover:bg-background shadow-sm backdrop-blur border text-muted-foreground hover:text-yellow-500 transition-colors"
+                  onClick={(e) => toggleStarred(resource.id, e)}
+                >
+                  <Star
+                    className="h-3.5 w-3.5"
+                    fill={starredMap[resource.id] ? "rgb(234 179 8)" : "none"}
+                    color={
+                      starredMap[resource.id]
+                        ? "rgb(234 179 8)"
+                        : "currentColor"
+                    }
+                  />
+                </div>
                 {/* Image preview for image resources */}
                 {imageUrl && (
                   <div className="h-28 bg-muted overflow-hidden">
@@ -770,12 +889,33 @@ export function ProjectDetailClient({ project, resources, allTags }: Props) {
           {selectedResource && (
             <ResourceSidebar
               resource={selectedResource}
-              projectId={project.id}
+              project={project}
               citationStyle={project.citationStyle}
               onNavigate={() => {
                 router.push(`/resources/${selectedResource.id}`);
                 setSelectedResource(null);
               }}
+              onUpdate={async (id, updates) => {
+                // Optimistic update
+                setSelectedResource((prev) =>
+                  prev && prev.id === id ? { ...prev, ...updates } : prev,
+                );
+                // Also update the resource in the main list (so table/gallery updates immediately)
+                // Wait, we can't easily update `resources` prop, but calling router.refresh() will fetch new data.
+                try {
+                  const res = await fetch(`/api/resources/${id}`, {
+                    method: "PATCH",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify(updates),
+                  });
+                  if (!res.ok) throw new Error();
+                  router.refresh();
+                } catch {
+                  toast.error("Failed to save changes");
+                  router.refresh(); // Revert optimistic update
+                }
+              }}
+              onDelete={handleDeleteResource}
             />
           )}
         </SheetContent>
@@ -798,24 +938,29 @@ export function ProjectDetailClient({ project, resources, allTags }: Props) {
 function ResourceSidebar({
   resource,
   onNavigate,
-  projectId,
+  project,
   citationStyle,
+  onUpdate,
+  onDelete,
 }: {
   resource: ResourceItem;
   onNavigate: () => void;
-  projectId: string;
+  project: Props["project"];
   citationStyle: string;
+  onUpdate: (id: string, updates: Partial<ResourceItem>) => void;
+  onDelete: (id: string) => void;
 }) {
   const m = TYPE_META[resource.resourceType as ResourceType];
   const tf = getTypeFields<Record<string, unknown>>(resource.typeFields);
   const customFields = resource.customFields || {};
 
   // Dynamic field visibility
-  const SIDEBAR_FIELDS_KEY = `papertrail-sidebar-fields-${projectId}`;
+  const SIDEBAR_FIELDS_KEY = `papertrail-sidebar-fields-${project.id}`;
   const ALL_FIELDS = [
     { id: "authors", label: "Authors" },
     { id: "year", label: "Year" },
     { id: "url", label: "Page URL" },
+    { id: "pdfUrl", label: "PDF URL" },
     { id: "abstract", label: "Abstract" },
     { id: "approach", label: "Approach" },
     { id: "keyContributions", label: "Key Contributions" },
@@ -850,20 +995,106 @@ function ResourceSidebar({
 
   const isField = (id: string) => visibleFields.has(id);
 
+  const handleCite = async (format: string) => {
+    try {
+      let ref = tf.reference ? String(tf.reference) : null;
+      // If no reference, generate one
+      if (!ref) {
+        toast.info("Generating citation...");
+        const genRes = await fetch("/api/ai/generate-citation", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            resourceId: resource.id,
+            citationStyle: "bibtex",
+          }),
+        });
+        if (genRes.ok) {
+          const data = await genRes.json();
+          ref = data.citation;
+        } else {
+          toast.error("Failed to generate citation");
+          return;
+        }
+      }
+      if (!ref) {
+        toast.error("No citation available");
+        return;
+      }
+      const { Cite } = await import("@citation-js/core");
+      await import("@citation-js/plugin-bibtex");
+      await import("@citation-js/plugin-csl");
+      const cite = new Cite(ref);
+      let output: string;
+      if (format === "bibtex") {
+        output = cite.format("bibtex");
+      } else {
+        output = cite.format("bibliography", {
+          format: "text",
+          template: format,
+          lang: "en-US",
+        });
+      }
+      await navigator.clipboard.writeText(output);
+      const label =
+        format === "bibtex"
+          ? "BibTeX"
+          : format === "ieee"
+            ? "IEEE"
+            : format === "apa"
+              ? "APA"
+              : format.toUpperCase();
+      toast.success(`Copied as ${label}`);
+    } catch {
+      if (tf.reference) {
+        await navigator.clipboard.writeText(String(tf.reference));
+        toast.success("Copied raw reference");
+      } else {
+        toast.error("Failed to copy citation");
+      }
+    }
+  };
+
   return (
     <>
       <SheetHeader className="pb-0">
         <div className="flex items-center gap-2">
-          {m && (
-            <Badge
-              variant="outline"
-              className="gap-1 text-xs"
-              style={{ color: m.color, borderColor: m.color }}
-            >
-              <m.icon className="h-3 w-3" />
-              {m.label}
-            </Badge>
-          )}
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <button
+                className="inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-xs font-medium transition-colors hover:bg-muted"
+                style={m ? { color: m.color, borderColor: m.color } : undefined}
+              >
+                {m && <m.icon className="h-3 w-3" />}
+                {m?.label ?? resource.resourceType}
+                <span className="text-muted-foreground ml-0.5">▾</span>
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start" className="w-40">
+              <DropdownMenuLabel className="text-xs">
+                Change type
+              </DropdownMenuLabel>
+              <DropdownMenuSeparator />
+              {RESOURCE_TYPES.map((rt) => {
+                const rm = TYPE_META[rt];
+                return (
+                  <DropdownMenuCheckboxItem
+                    key={rt}
+                    checked={resource.resourceType === rt}
+                    onCheckedChange={() => {
+                      if (rt !== resource.resourceType) {
+                        onUpdate(resource.id, { resourceType: rt });
+                      }
+                    }}
+                    className="text-xs gap-1.5"
+                  >
+                    <rm.icon className="h-3 w-3" style={{ color: rm.color }} />
+                    {rm.label}
+                  </DropdownMenuCheckboxItem>
+                );
+              })}
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
         <div className="flex items-center gap-2 mt-2">
           <SheetTitle className="text-lg leading-tight flex-1">
@@ -899,64 +1130,47 @@ function ResourceSidebar({
             </Button>
           </Link>
           <Button
-            variant="outline"
-            size="sm"
-            className="gap-1.5 ml-auto"
-            onClick={async () => {
-              try {
-                let ref = tf.reference ? String(tf.reference) : null;
-                // If no reference, generate one
-                if (!ref) {
-                  toast.info("Generating citation...");
-                  const genRes = await fetch("/api/ai/generate-citation", {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({
-                      resourceId: resource.id,
-                      citationStyle: "bibtex",
-                    }),
-                  });
-                  if (genRes.ok) {
-                    const data = await genRes.json();
-                    ref = data.citation;
-                  } else {
-                    toast.error("Failed to generate citation");
-                    return;
-                  }
-                }
-                if (!ref) {
-                  toast.error("No citation available");
-                  return;
-                }
-                const { Cite } = await import("@citation-js/core");
-                await import("@citation-js/plugin-bibtex");
-                await import("@citation-js/plugin-csl");
-                const cite = new Cite(ref);
-                let output: string;
-                if (citationStyle === "bibtex") {
-                  output = cite.format("bibtex");
-                } else {
-                  output = cite.format("bibliography", {
-                    format: "text",
-                    template: citationStyle,
-                    lang: "en-US",
-                  });
-                }
-                await navigator.clipboard.writeText(output);
-                toast.success(`Copied as ${citationStyle.toUpperCase()}`);
-              } catch {
-                if (tf.reference) {
-                  await navigator.clipboard.writeText(String(tf.reference));
-                  toast.success("Copied raw reference");
-                } else {
-                  toast.error("Failed to copy citation");
-                }
-              }
-            }}
+            variant="ghost"
+            size="icon"
+            className="h-8 w-8 text-destructive border"
+            onClick={() => onDelete(resource.id)}
+            title="Delete resource"
           >
-            <Copy className="h-3.5 w-3.5" />
-            Cite
+            <Trash2 className="h-4 w-4" />
           </Button>
+          <div className="flex ml-auto group">
+            <Button
+              variant="outline"
+              size="sm"
+              className="gap-1.5 rounded-r-none border-r-0 focus-visible:z-10"
+              onClick={() => handleCite(citationStyle)}
+            >
+              <Copy className="h-3.5 w-3.5" />
+              Cite
+            </Button>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="px-1.5 rounded-l-none focus-visible:z-10 border-l border-border/50"
+                >
+                  <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-32">
+                <DropdownMenuItem onClick={() => handleCite("bibtex")}>
+                  BibTeX
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => handleCite("ieee")}>
+                  IEEE
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => handleCite("apa")}>
+                  APA
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
         </div>
 
         <Separator />
@@ -1024,6 +1238,22 @@ function ResourceSidebar({
               }
             />
           )}
+          {isField("pdfUrl") && !!tf.pdfUrl && (
+            <SidebarField
+              icon={<ExternalLink className="h-3.5 w-3.5" />}
+              label="PDF URL"
+              value={
+                <a
+                  href={String(tf.pdfUrl)}
+                  target="_blank"
+                  rel="noopener"
+                  className="text-blue-500 hover:underline text-sm truncate block"
+                >
+                  {String(tf.pdfUrl)}
+                </a>
+              }
+            />
+          )}
           {isField("abstract") && !!tf.abstract && (
             <SidebarField label="Abstract" value={String(tf.abstract)} />
           )}
@@ -1078,45 +1308,84 @@ function ResourceSidebar({
           </>
         )}
 
-        {/* Custom Fields */}
-        {isField("customFields") && Object.keys(customFields).length > 0 && (
-          <>
-            <Separator />
-            <div>
-              <p className="text-xs font-medium text-muted-foreground mb-2">
-                Custom Fields
-              </p>
-              <dl className="space-y-1.5">
-                {Object.entries(customFields).map(([key, value]) => (
-                  <div key={key} className="text-sm">
-                    <dt className="text-muted-foreground text-xs mb-0.5">
-                      {key}
-                    </dt>
-                    <dd className="font-medium">
-                      <div className="prose prose-sm dark:prose-invert max-w-none">
-                        <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                          {String(value)}
-                        </ReactMarkdown>
-                      </div>
-                    </dd>
-                  </div>
-                ))}
-              </dl>
-            </div>
-          </>
-        )}
-
         {/* Notes preview */}
-        {isField("notes") && resource.notes && (
+        {isField("notes") && (
           <>
             <Separator />
             <div>
               <p className="text-xs font-medium text-muted-foreground mb-2">
                 Notes
               </p>
-              <p className="text-sm text-foreground/80 whitespace-pre-wrap line-clamp-6">
-                {resource.notes}
-              </p>
+              <EditableText
+                value={resource.notes || ""}
+                onSave={(val) => onUpdate(resource.id, { notes: val })}
+                multiline
+                placeholder="Click to add notes..."
+              />
+            </div>
+          </>
+        )}
+
+        {/* Custom Fields */}
+        {isField("customFields") && (
+          <>
+            <Separator />
+            <div>
+              <dl className="space-y-1.5">
+                {/* Render predefined templates first */}
+                {project.customFieldTemplates.map((template) => {
+                  const val =
+                    customFields[template.key] ??
+                    customFields[template.name] ??
+                    "";
+                  return (
+                    <div key={template.key} className="text-sm">
+                      <dt className="text-muted-foreground text-xs mb-0.5">
+                        {template.label || template.name}
+                      </dt>
+                      <dd className="font-medium text-foreground/90">
+                        <EditableText
+                          value={String(val)}
+                          onSave={(newVal) => {
+                            const newCf = {
+                              ...customFields,
+                              [template.key]: newVal,
+                            };
+                            onUpdate(resource.id, { customFields: newCf });
+                          }}
+                          placeholder={`Click to edit ${template.label || template.name}...`}
+                          multiline={template.type === "long_text"}
+                        />
+                      </dd>
+                    </div>
+                  );
+                })}
+                {/* Render any extra custom fields not in templates */}
+                {Object.entries(customFields)
+                  .filter(
+                    ([key]) =>
+                      !project.customFieldTemplates.some(
+                        (t) => t.key === key || t.name === key,
+                      ),
+                  )
+                  .map(([key, value]) => (
+                    <div key={key} className="text-sm">
+                      <dt className="text-muted-foreground text-xs mb-0.5">
+                        {key}
+                      </dt>
+                      <dd className="font-medium text-foreground/90">
+                        <EditableText
+                          value={String(value)}
+                          onSave={(newVal) => {
+                            const newCf = { ...customFields, [key]: newVal };
+                            onUpdate(resource.id, { customFields: newCf });
+                          }}
+                          placeholder={`Click to edit ${key}...`}
+                        />
+                      </dd>
+                    </div>
+                  ))}
+              </dl>
             </div>
           </>
         )}
@@ -1158,6 +1427,88 @@ function SidebarField({
         </div>
       ) : (
         value
+      )}
+    </div>
+  );
+}
+
+function EditableText({
+  value,
+  onSave,
+  multiline = false,
+  placeholder = "Click to edit...",
+}: {
+  value: string;
+  onSave: (val: string) => void;
+  multiline?: boolean;
+  placeholder?: string;
+}) {
+  const [isEditing, setIsEditing] = React.useState(false);
+  const [currentValue, setCurrentValue] = React.useState(value);
+
+  React.useEffect(() => {
+    setCurrentValue(value);
+  }, [value]);
+
+  if (isEditing) {
+    if (multiline) {
+      return (
+        <textarea
+          autoFocus
+          className="w-full text-sm rounded-md border p-2 min-h-[100px] resize-y focus:outline-none focus:ring-1 focus:ring-primary bg-background text-foreground"
+          value={currentValue}
+          onChange={(e) => setCurrentValue(e.target.value)}
+          onBlur={() => {
+            setIsEditing(false);
+            if (currentValue !== value) onSave(currentValue);
+          }}
+          onKeyDown={(e) => {
+            if (e.key === "Escape") {
+              setIsEditing(false);
+              setCurrentValue(value);
+            }
+          }}
+        />
+      );
+    }
+    return (
+      <input
+        autoFocus
+        className="w-full text-sm rounded-md border p-1.5 focus:outline-none focus:ring-1 focus:ring-primary bg-background text-foreground"
+        value={currentValue}
+        onChange={(e) => setCurrentValue(e.target.value)}
+        onBlur={() => {
+          setIsEditing(false);
+          if (currentValue !== value) onSave(currentValue);
+        }}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") {
+            setIsEditing(false);
+            if (currentValue !== value) onSave(currentValue);
+          }
+          if (e.key === "Escape") {
+            setIsEditing(false);
+            setCurrentValue(value);
+          }
+        }}
+      />
+    );
+  }
+
+  return (
+    <div
+      onClick={() => setIsEditing(true)}
+      className="cursor-pointer hover:bg-muted/50 p-1 -ml-1 rounded transition-colors group min-h-[1.5rem]"
+      title="Click to edit"
+    >
+      {value ? (
+        <div className="prose prose-sm dark:prose-invert max-w-none">
+          <ReactMarkdown remarkPlugins={[remarkGfm]}>{value}</ReactMarkdown>
+        </div>
+      ) : (
+        <span className="text-muted-foreground italic text-sm group-hover:text-foreground">
+          {placeholder}
+        </span>
       )}
     </div>
   );
