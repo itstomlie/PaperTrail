@@ -2,9 +2,9 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { useRouter } from "next/navigation";
 import {
   ArrowLeft,
   Edit,
@@ -19,6 +19,7 @@ import {
   BookOpen,
   Quote,
   Sparkles,
+  Link2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -286,9 +287,17 @@ export function ResourceDetailClient({ resource, allResources }: Props) {
           <CardContent>
             <dl className="space-y-2">
               {Object.entries(customFields).map(([key, value]) => (
-                <div key={key} className="flex justify-between text-sm">
-                  <dt className="text-muted-foreground">{key}</dt>
-                  <dd className="font-medium">{String(value)}</dd>
+                <div key={key} className="text-sm">
+                  <dt className="text-muted-foreground text-xs mb-0.5">
+                    {key}
+                  </dt>
+                  <dd className="font-medium">
+                    <div className="prose prose-sm dark:prose-invert max-w-none">
+                      <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                        {String(value)}
+                      </ReactMarkdown>
+                    </div>
+                  </dd>
                 </div>
               ))}
             </dl>
@@ -399,6 +408,30 @@ export function ResourceDetailClient({ resource, allResources }: Props) {
                 </a>
               )}
             </h1>
+
+            {/* Additional Links */}
+            {(() => {
+              const tfAny = tf as unknown as Record<string, unknown>;
+              const tfLinks = Array.isArray(tfAny.links)
+                ? (tfAny.links as { label: string; url: string }[])
+                : [];
+              return tfLinks.length > 0 ? (
+                <div className="mt-1 flex flex-wrap items-center gap-2">
+                  {tfLinks.map((link, i) => (
+                    <a
+                      key={i}
+                      href={link.url}
+                      target="_blank"
+                      rel="noopener"
+                      className="inline-flex items-center gap-1 text-xs text-blue-500 hover:underline rounded-md border px-2 py-0.5"
+                    >
+                      <Link2 className="h-3 w-3" />
+                      {link.label || new URL(link.url).hostname}
+                    </a>
+                  ))}
+                </div>
+              ) : null;
+            })()}
             <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-muted-foreground">
               <Badge
                 variant="outline"
@@ -507,14 +540,6 @@ export function ResourceDetailClient({ resource, allResources }: Props) {
             alt=""
             className="w-full max-h-48 object-cover bg-muted"
           />
-        </div>
-      )}
-
-      {/* PDF extraction status */}
-      {tf.pdfExtractionStatus === "failed" && (
-        <div className="rounded-md border border-yellow-500/50 bg-yellow-50 p-3 text-sm text-yellow-800 dark:bg-yellow-950/50 dark:text-yellow-200">
-          PDF text extraction failed — AI answers will use metadata and notes
-          only.
         </div>
       )}
 

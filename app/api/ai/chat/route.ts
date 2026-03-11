@@ -31,7 +31,7 @@ function buildPaperPrompt(resource: {
   return `You are a research paper analysis assistant. You help the user understand and explore a specific academic paper.
 
 YOUR STRICT RULES:
-1. You may ONLY use the information provided below to answer questions.
+1. You may ONLY use the information provided below (and any attached PDF) to answer questions.
 2. You must NEVER generate information not explicitly present in the provided content. If not found, say: "I cannot find information about that in this paper's available content."
 3. You must NEVER speculate, infer beyond what is written, or draw on external knowledge.
 4. When answering, CITE where your answer comes from. Use: [Source: <section name, page number, or "metadata"/"user notes">].
@@ -56,12 +56,7 @@ ${cfStr}
 ---
 
 USER'S NOTES ON THIS PAPER:
-${resource.notes || "No notes provided."}
-
----
-
-EXTRACTED PDF TEXT:
-${tf.pdfTextContent || "PDF text not available. Answer based on metadata and notes only."}`;
+${resource.notes || "No notes provided."}`;
 }
 
 // ─── Article prompt ────────────────────────────────────────────────
@@ -127,7 +122,7 @@ function buildBookPrompt(resource: {
   return `You are a research resource analysis assistant. You help the user understand and explore a specific book or chapter.
 
 YOUR STRICT RULES:
-1. You may ONLY use the information provided below to answer questions.
+1. You may ONLY use the information provided below (and any attached PDF) to answer questions.
 2. You must NEVER generate information not explicitly present in the provided content. If not found, say: "I cannot find information about that in this book's available content."
 3. You must NEVER speculate, infer beyond what is written, or draw on external knowledge.
 4. When answering, CITE where your answer comes from. Use: [Source: <section name, page number, or "metadata"/"user notes">].
@@ -152,12 +147,7 @@ ${cfStr}
 ---
 
 USER'S NOTES:
-${resource.notes || "No notes provided."}
-
----
-
-EXTRACTED PDF TEXT:
-${tf.pdfTextContent || "PDF text not available. Answer based on metadata and notes only."}`;
+${resource.notes || "No notes provided."}`;
 }
 
 // ─── Project prompt ──────────────────────────────────────────────
@@ -187,15 +177,12 @@ function buildProjectPrompt(project: {
         .filter(([k]) => k !== "pdfTextContent")
         .map(([k, v]) => `- ${k}: ${v ?? "Not provided."}`)
         .join("\n");
-      const pdfText = (tf.pdfTextContent as string) || null;
 
       return `=== ${type}: "${resource.title}" ===
 ${meta}
 
 USER'S NOTES:
-${resource.notes || "No notes provided."}
-
-${pdfText ? `EXTRACTED TEXT:\n${pdfText.slice(0, 8000)}` : ""}`;
+${resource.notes || "No notes provided."}`;
     })
     .join("\n\n");
 
@@ -206,7 +193,7 @@ ${pdfText ? `EXTRACTED TEXT:\n${pdfText.slice(0, 8000)}` : ""}`;
   return `You are a research project analysis assistant. You help the user explore, compare, and synthesise across a collection of research resources within a project.
 
 YOUR STRICT RULES:
-1. You may ONLY use the information provided below to answer questions.
+1. You may ONLY use the information provided below (and any attached PDFs) to answer questions.
 2. You must NEVER generate information not explicitly present. If not found, say: "I cannot find information about that in the resources available in this project."
 3. You must NEVER speculate or draw on external knowledge.
 4. ATTRIBUTE every claim to a specific resource by title and type.
@@ -228,6 +215,21 @@ RESOURCES IN THIS PROJECT:
 ${resourceTexts}`;
 }
 
+// ─── Helper: collect PDF URLs from resources ─────────────────────
+
+function collectPdfUrls(
+  resources: Array<{ resourceType: string; typeFields: string }>,
+): string[] {
+  const urls: string[] = [];
+  for (const r of resources) {
+    if (["paper", "book"].includes(r.resourceType)) {
+      const tf = getTypeFields<PaperTypeFields & BookTypeFields>(r.typeFields);
+      if (tf.pdfUrl) urls.push(tf.pdfUrl);
+    }
+  }
+  return urls;
+}
+
 export async function POST(request: Request) {
   try {
     const { question, scope, resourceId, projectId, conversationId } =
@@ -238,6 +240,7 @@ export async function POST(request: Request) {
     }
 
     let systemPrompt: string;
+    let pdfUrls: string[] = [];
 
     if (scope === "resource" && resourceId) {
       const resource = await prisma.resource.findUnique({
@@ -258,54 +261,12 @@ export async function POST(request: Request) {
         );
       }
 
-      // Lazy PDF extraction: if paper/book has a pdfUrl and no extracted text yet, try now
+      // Collect PDF URL if available (for paper/book)
       if (["paper", "book"].includes(resource.resourceType)) {
         const tf = getTypeFields<PaperTypeFields & BookTypeFields>(
           resource.typeFields,
         );
-        if (
-          tf.pdfUrl &&
-          !tf.pdfTextContent &&
-          tf.pdfExtractionStatus !== "failed"
-        ) {
-          // Attempt extraction inline
-          try {
-            const pdfRes = await fetch(tf.pdfUrl);
-            if (pdfRes.ok) {
-              const buffer = Buffer.from(await pdfRes.arrayBuffer());
-              const { PDFParse } = await import("pdf-parse");
-              const parser = new PDFParse({ data: new Uint8Array(buffer) });
-              const textResult = await parser.getText();
-              const text = textResult.pages
-                .map((p: { text: string }) => p.text)
-                .join("\n\n");
-
-              const updatedTf = {
-                ...tf,
-                pdfTextContent: text,
-                pdfExtractionStatus: "success",
-              };
-              await prisma.resource.update({
-                where: { id: resourceId },
-                data: { typeFields: JSON.stringify(updatedTf) },
-              });
-              // Re-read the updated resource
-              const updated = await prisma.resource.findUnique({
-                where: { id: resourceId },
-              });
-              if (updated) {
-                Object.assign(resource, updated);
-              }
-            }
-          } catch {
-            // Mark as failed so we don't retry every time
-            const failedTf = { ...tf, pdfExtractionStatus: "failed" };
-            await prisma.resource.update({
-              where: { id: resourceId },
-              data: { typeFields: JSON.stringify(failedTf) },
-            });
-          }
-        }
+        if (tf.pdfUrl) pdfUrls.push(tf.pdfUrl);
       }
 
       switch (resource.resourceType) {
@@ -332,6 +293,7 @@ export async function POST(request: Request) {
         );
       }
       systemPrompt = buildProjectPrompt(project);
+      pdfUrls = collectPdfUrls(project.resources.map((pr) => pr.resource));
     } else {
       return NextResponse.json(
         { error: "Invalid scope. Provide resourceId or projectId." },
@@ -351,20 +313,31 @@ export async function POST(request: Request) {
       }
     }
 
+    // Build the user message — attach PDF files if available
+    const userContent: OpenAI.Chat.ChatCompletionContentPart[] = [];
+
+    for (const url of pdfUrls) {
+      userContent.push({
+        type: "file",
+        file: { url },
+      } as OpenAI.Chat.ChatCompletionContentPart);
+    }
+
+    userContent.push({ type: "text", text: question });
+
     const messages: OpenAI.Chat.ChatCompletionMessageParam[] = [
       { role: "system", content: systemPrompt },
       ...previousMessages.map((m) => ({
         role: m.role as "user" | "assistant",
         content: m.content,
       })),
-      { role: "user", content: question },
+      { role: "user", content: userContent },
     ];
 
     const completion = await openai.chat.completions.create({
       model: "gpt-5-mini",
       messages,
       temperature: 0.1,
-      max_tokens: 3000,
     });
 
     const answer =

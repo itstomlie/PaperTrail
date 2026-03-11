@@ -81,7 +81,6 @@ export const TYPE_META: Record<ResourceType, TypeMeta> = {
 type Feature =
   | "doi_import"
   | "reference_management"
-  | "pdf_extraction"
   | "ai_chat"
   | "og_preview"
   | "image_preview"
@@ -90,7 +89,6 @@ type Feature =
 const FEATURE_MATRIX: Record<Feature, ResourceType[]> = {
   doi_import: ["paper"],
   reference_management: ["paper", "book"],
-  pdf_extraction: ["paper", "book"],
   ai_chat: ["paper", "article", "book"],
   og_preview: ["article", "web_link"],
   image_preview: ["image"],
@@ -113,8 +111,6 @@ export interface PaperTypeFields {
   keyContributions?: string | null;
   datasets?: string | null;
   pdfUrl?: string | null;
-  pdfTextContent?: string | null;
-  pdfExtractionStatus?: string | null;
   abstract?: string | null;
   citationCount?: number | null;
   source?: string | null;
@@ -163,8 +159,6 @@ export interface BookTypeFields {
   chapter?: string | null;
   pages?: string | null;
   pdfUrl?: string | null;
-  pdfTextContent?: string | null;
-  pdfExtractionStatus?: string | null;
   reference?: string | null;
 }
 

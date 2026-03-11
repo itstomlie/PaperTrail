@@ -3,6 +3,8 @@
 import * as React from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { AddResourceSheet } from "@/components/add-resource-sheet";
 import {
   Plus,
@@ -17,6 +19,10 @@ import {
   Users,
   Calendar,
   Check,
+  Copy,
+  Link2,
+  Download,
+  Loader2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -114,7 +120,14 @@ interface Props {
     id: string;
     name: string;
     description: string | null;
-    customFieldTemplates: { name: string; type: string }[];
+    customFieldTemplates: {
+      key: string;
+      name: string;
+      label: string;
+      type: string;
+      options?: string[];
+    }[];
+    citationStyle: string;
     _count: { resources: number };
   };
   resources: ResourceItem[];
@@ -340,6 +353,55 @@ export function ProjectDetailClient({ project, resources, allTags }: Props) {
           >
             <Plus className="h-4 w-4" />
             Add Resource
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            className="gap-1.5"
+            onClick={async () => {
+              const { utils, writeFile } = await import("xlsx");
+              // Collect all custom field keys across resources
+              const allCfKeys = new Set<string>();
+              resources.forEach((r) => {
+                Object.keys(r.customFields || {}).forEach((k) =>
+                  allCfKeys.add(k),
+                );
+              });
+              const cfKeysArr = [...allCfKeys];
+
+              const rows = resources.map((r) => {
+                const tf = getTypeFields<Record<string, unknown>>(r.typeFields);
+                const row: Record<string, unknown> = {
+                  Title: r.title,
+                  Type:
+                    TYPE_META[r.resourceType as ResourceType]?.label ||
+                    r.resourceType,
+                  URL: r.url || "",
+                  Authors: tf.authors || "",
+                  Year: tf.year || "",
+                  Tags: r.tags.map((t) => t.name).join(", "),
+                  Notes: r.notes || "",
+                  Added: new Date(r.createdAt).toLocaleDateString(),
+                };
+                // Add custom fields as columns
+                cfKeysArr.forEach((k) => {
+                  row[k] =
+                    r.customFields?.[k] != null
+                      ? String(r.customFields[k])
+                      : "";
+                });
+                return row;
+              });
+
+              const ws = utils.json_to_sheet(rows);
+              const wb = utils.book_new();
+              utils.book_append_sheet(wb, ws, "Resources");
+              writeFile(wb, `${project.name} - Resources.xlsx`);
+              toast.success("Exported to Excel");
+            }}
+          >
+            <Download className="h-4 w-4" />
+            Export
           </Button>
           <Link href={`/projects/${project.id}/settings`}>
             <Button variant="outline" size="sm" className="gap-1.5">
@@ -709,6 +771,7 @@ export function ProjectDetailClient({ project, resources, allTags }: Props) {
             <ResourceSidebar
               resource={selectedResource}
               projectId={project.id}
+              citationStyle={project.citationStyle}
               onNavigate={() => {
                 router.push(`/resources/${selectedResource.id}`);
                 setSelectedResource(null);
@@ -724,6 +787,7 @@ export function ProjectDetailClient({ project, resources, allTags }: Props) {
         open={showAddSheet}
         onOpenChange={setShowAddSheet}
         onResourceAdded={() => router.refresh()}
+        customFieldTemplates={project.customFieldTemplates}
       />
     </div>
   );
@@ -735,10 +799,12 @@ function ResourceSidebar({
   resource,
   onNavigate,
   projectId,
+  citationStyle,
 }: {
   resource: ResourceItem;
   onNavigate: () => void;
   projectId: string;
+  citationStyle: string;
 }) {
   const m = TYPE_META[resource.resourceType as ResourceType];
   const tf = getTypeFields<Record<string, unknown>>(resource.typeFields);
@@ -832,6 +898,65 @@ function ResourceSidebar({
               Edit
             </Button>
           </Link>
+          <Button
+            variant="outline"
+            size="sm"
+            className="gap-1.5 ml-auto"
+            onClick={async () => {
+              try {
+                let ref = tf.reference ? String(tf.reference) : null;
+                // If no reference, generate one
+                if (!ref) {
+                  toast.info("Generating citation...");
+                  const genRes = await fetch("/api/ai/generate-citation", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                      resourceId: resource.id,
+                      citationStyle: "bibtex",
+                    }),
+                  });
+                  if (genRes.ok) {
+                    const data = await genRes.json();
+                    ref = data.citation;
+                  } else {
+                    toast.error("Failed to generate citation");
+                    return;
+                  }
+                }
+                if (!ref) {
+                  toast.error("No citation available");
+                  return;
+                }
+                const { Cite } = await import("@citation-js/core");
+                await import("@citation-js/plugin-bibtex");
+                await import("@citation-js/plugin-csl");
+                const cite = new Cite(ref);
+                let output: string;
+                if (citationStyle === "bibtex") {
+                  output = cite.format("bibtex");
+                } else {
+                  output = cite.format("bibliography", {
+                    format: "text",
+                    template: citationStyle,
+                    lang: "en-US",
+                  });
+                }
+                await navigator.clipboard.writeText(output);
+                toast.success(`Copied as ${citationStyle.toUpperCase()}`);
+              } catch {
+                if (tf.reference) {
+                  await navigator.clipboard.writeText(String(tf.reference));
+                  toast.success("Copied raw reference");
+                } else {
+                  toast.error("Failed to copy citation");
+                }
+              }
+            }}
+          >
+            <Copy className="h-3.5 w-3.5" />
+            Cite
+          </Button>
         </div>
 
         <Separator />
@@ -963,9 +1088,17 @@ function ResourceSidebar({
               </p>
               <dl className="space-y-1.5">
                 {Object.entries(customFields).map(([key, value]) => (
-                  <div key={key} className="flex justify-between text-sm">
-                    <dt className="text-muted-foreground">{key}</dt>
-                    <dd className="font-medium text-right">{String(value)}</dd>
+                  <div key={key} className="text-sm">
+                    <dt className="text-muted-foreground text-xs mb-0.5">
+                      {key}
+                    </dt>
+                    <dd className="font-medium">
+                      <div className="prose prose-sm dark:prose-invert max-w-none">
+                        <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                          {String(value)}
+                        </ReactMarkdown>
+                      </div>
+                    </dd>
                   </div>
                 ))}
               </dl>
@@ -1019,7 +1152,13 @@ function SidebarField({
         {icon}
         {label}
       </div>
-      {typeof value === "string" ? <p className="text-sm">{value}</p> : value}
+      {typeof value === "string" ? (
+        <div className="prose prose-sm dark:prose-invert max-w-none">
+          <ReactMarkdown remarkPlugins={[remarkGfm]}>{value}</ReactMarkdown>
+        </div>
+      ) : (
+        value
+      )}
     </div>
   );
 }

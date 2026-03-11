@@ -9,6 +9,7 @@ import {
   Trash2,
   ImageIcon,
   Loader2,
+  Link2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -67,6 +68,11 @@ export default function EditResourcePage({
     { key: string; value: string }[]
   >([]);
 
+  // Additional links
+  const [links, setLinks] = React.useState<{ label: string; url: string }[]>(
+    [],
+  );
+
   // Image paste
   const [uploadingImage, setUploadingImage] = React.useState(false);
 
@@ -115,7 +121,12 @@ export default function EditResourcePage({
       setUrl(resource.url || "");
       setNotes(resource.notes || "");
       setThumbnailUrl(resource.thumbnailUrl || "");
-      setTf(JSON.parse(resource.typeFields || "{}"));
+      const parsedTf = JSON.parse(resource.typeFields || "{}");
+      setTf(parsedTf);
+      // Load links from typeFields
+      if (Array.isArray(parsedTf.links)) {
+        setLinks(parsedTf.links);
+      }
       setAllProjects(projects);
       setAllTags(tags);
       setSelectedProjectIds(
@@ -137,6 +148,14 @@ export default function EditResourcePage({
   const updateTf = (key: string, value: unknown) =>
     setTf((prev) => ({ ...prev, [key]: value }));
 
+  const addLink = () => setLinks((prev) => [...prev, { label: "", url: "" }]);
+  const removeLink = (index: number) =>
+    setLinks((prev) => prev.filter((_, i) => i !== index));
+  const updateLink = (index: number, field: "label" | "url", value: string) =>
+    setLinks((prev) =>
+      prev.map((l, i) => (i === index ? { ...l, [field]: value } : l)),
+    );
+
   const handleSave = async () => {
     const { id } = await params;
     if (!title.trim()) {
@@ -150,6 +169,12 @@ export default function EditResourcePage({
       if (f.key.trim()) cfObj[f.key.trim()] = f.value;
     }
 
+    // Merge links into typeFields
+    const mergedTf = {
+      ...tf,
+      links: links.filter((l) => l.url.trim()),
+    };
+
     const res = await fetch(`/api/resources/${id}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
@@ -158,7 +183,7 @@ export default function EditResourcePage({
         url: url.trim() || null,
         notes: notes.trim() || null,
         thumbnailUrl: thumbnailUrl || null,
-        typeFields: tf,
+        typeFields: mergedTf,
         customFields: cfObj,
         projectIds: selectedProjectIds,
         tagIds: selectedTagIds,
@@ -212,6 +237,55 @@ export default function EditResourcePage({
           <Label>URL</Label>
           <Input value={url} onChange={(e) => setUrl(e.target.value)} />
         </div>
+      </div>
+
+      {/* Additional Links */}
+      <div className="space-y-3">
+        <div className="flex items-center justify-between">
+          <Label className="flex items-center gap-1.5">
+            <Link2 className="h-3.5 w-3.5" />
+            Additional Links
+          </Label>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="gap-1 h-7 text-xs"
+            onClick={addLink}
+          >
+            <Plus className="h-3 w-3" /> Add Link
+          </Button>
+        </div>
+        {links.length === 0 && (
+          <p className="text-sm text-muted-foreground">
+            Add links such as PDF URL, DOI, or related pages.
+          </p>
+        )}
+        {links.map((link, i) => (
+          <div key={i} className="flex items-center gap-2">
+            <Input
+              value={link.label}
+              onChange={(e) => updateLink(i, "label", e.target.value)}
+              placeholder="Label (e.g. PDF, DOI)"
+              className="w-1/3"
+            />
+            <Input
+              value={link.url}
+              onChange={(e) => updateLink(i, "url", e.target.value)}
+              placeholder="https://..."
+              className="flex-1"
+            />
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="h-8 w-8 shrink-0 text-destructive"
+              onClick={() => removeLink(i)}
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+            </Button>
+          </div>
+        ))}
       </div>
 
       <Separator />

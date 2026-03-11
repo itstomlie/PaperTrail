@@ -14,6 +14,7 @@ import {
   Trash2,
   ImageIcon,
   Upload,
+  Link2,
 } from "lucide-react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
@@ -152,8 +153,13 @@ export function NewResourceClient() {
 
   // Custom fields
   const [customFields, setCustomFields] = React.useState<
-    { key: string; value: string }[]
+    { key: string; value: string; type?: string; label?: string }[]
   >([]);
+
+  // Additional links
+  const [links, setLinks] = React.useState<{ label: string; url: string }[]>(
+    [],
+  );
 
   // Image paste
   const [uploadingImage, setUploadingImage] = React.useState(false);
@@ -199,8 +205,31 @@ export function NewResourceClient() {
     ]).then(([p, t]) => {
       setProjects(p);
       setTags(t);
+      // If preselected project, fetch its custom field templates
+      if (preselectedProjectId) {
+        const proj = p.find(
+          (pr: { id: string }) => pr.id === preselectedProjectId,
+        );
+        if (proj) {
+          try {
+            const templates = JSON.parse(proj.customFieldTemplates || "[]");
+            if (Array.isArray(templates) && templates.length > 0) {
+              setCustomFields(
+                templates.map(
+                  (t: { key: string; label: string; type: string }) => ({
+                    key: t.key,
+                    value: "",
+                    type: t.type,
+                    label: t.label,
+                  }),
+                ),
+              );
+            }
+          } catch {}
+        }
+      }
     });
-  }, []);
+  }, [preselectedProjectId]);
 
   // Smart input handler
   const handleSmartInput = async () => {
@@ -344,6 +373,14 @@ export function NewResourceClient() {
     }
   };
 
+  // Merge links into typeFields on save
+  const getTypeFieldsWithLinks = (): Record<string, unknown> => {
+    const base = buildTypeFields();
+    const filteredLinks = links.filter((l) => l.url.trim());
+    if (filteredLinks.length > 0) base.links = filteredLinks;
+    return base;
+  };
+
   const handleSave = async () => {
     if (!title.trim()) {
       toast.error("Title is required");
@@ -372,7 +409,7 @@ export function NewResourceClient() {
         url: url.trim() || null,
         notes: notes.trim() || null,
         thumbnailUrl: thumbnailUrl || null,
-        typeFields: buildTypeFields(),
+        typeFields: getTypeFieldsWithLinks(),
         customFields: Object.keys(cfObj).length > 0 ? cfObj : undefined,
         projectIds: selectedProjectIds,
         tagIds: selectedTagIds,
@@ -932,6 +969,71 @@ export function NewResourceClient() {
             placeholder="https://..."
           />
         </div>
+
+        {/* Additional Links */}
+        <div className="space-y-3">
+          <div className="flex items-center justify-between">
+            <Label className="flex items-center gap-1.5">
+              <Link2 className="h-3.5 w-3.5" />
+              Additional Links
+            </Label>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="gap-1 h-7 text-xs"
+              onClick={() =>
+                setLinks((prev) => [...prev, { label: "", url: "" }])
+              }
+            >
+              <Plus className="h-3 w-3" /> Add Link
+            </Button>
+          </div>
+          {links.length === 0 && (
+            <p className="text-sm text-muted-foreground">
+              Add links such as PDF URL, DOI, or related pages.
+            </p>
+          )}
+          {links.map((link, i) => (
+            <div key={i} className="flex items-center gap-2">
+              <Input
+                value={link.label}
+                onChange={(e) =>
+                  setLinks((prev) =>
+                    prev.map((l, j) =>
+                      j === i ? { ...l, label: e.target.value } : l,
+                    ),
+                  )
+                }
+                placeholder="Label (e.g. PDF, DOI)"
+                className="w-1/3"
+              />
+              <Input
+                value={link.url}
+                onChange={(e) =>
+                  setLinks((prev) =>
+                    prev.map((l, j) =>
+                      j === i ? { ...l, url: e.target.value } : l,
+                    ),
+                  )
+                }
+                placeholder="https://..."
+                className="flex-1"
+              />
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8 shrink-0 text-destructive"
+                onClick={() =>
+                  setLinks((prev) => prev.filter((_, j) => j !== i))
+                }
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+              </Button>
+            </div>
+          ))}
+        </div>
       </div>
 
       <Separator />
@@ -978,42 +1080,72 @@ export function NewResourceClient() {
           </p>
         )}
         {customFields.map((field, i) => (
-          <div key={i} className="flex items-center gap-2">
-            <Input
-              value={field.key}
-              onChange={(e) =>
-                setCustomFields((prev) =>
-                  prev.map((f, j) =>
-                    j === i ? { ...f, key: e.target.value } : f,
-                  ),
-                )
-              }
-              placeholder="Field name"
-              className="w-1/3"
-            />
-            <Input
-              value={field.value}
-              onChange={(e) =>
-                setCustomFields((prev) =>
-                  prev.map((f, j) =>
-                    j === i ? { ...f, value: e.target.value } : f,
-                  ),
-                )
-              }
-              placeholder="Value"
-              className="flex-1"
-            />
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              className="h-8 w-8 shrink-0 text-destructive"
-              onClick={() =>
-                setCustomFields((prev) => prev.filter((_, j) => j !== i))
-              }
-            >
-              <Trash2 className="h-3.5 w-3.5" />
-            </Button>
+          <div key={i} className="space-y-1">
+            {field.label ? (
+              <Label className="text-xs text-muted-foreground">
+                {field.label}
+              </Label>
+            ) : null}
+            <div className="flex items-center gap-2">
+              {!field.label && (
+                <Input
+                  value={field.key}
+                  onChange={(e) =>
+                    setCustomFields((prev) =>
+                      prev.map((f, j) =>
+                        j === i ? { ...f, key: e.target.value } : f,
+                      ),
+                    )
+                  }
+                  placeholder="Field name"
+                  className="w-1/3"
+                />
+              )}
+              {field.type === "long_text" ? (
+                <Textarea
+                  value={field.value}
+                  onChange={(e) =>
+                    setCustomFields((prev) =>
+                      prev.map((f, j) =>
+                        j === i ? { ...f, value: e.target.value } : f,
+                      ),
+                    )
+                  }
+                  placeholder={
+                    field.label ? `Enter ${field.label.toLowerCase()}` : "Value"
+                  }
+                  rows={3}
+                  className="flex-1"
+                />
+              ) : (
+                <Input
+                  value={field.value}
+                  onChange={(e) =>
+                    setCustomFields((prev) =>
+                      prev.map((f, j) =>
+                        j === i ? { ...f, value: e.target.value } : f,
+                      ),
+                    )
+                  }
+                  placeholder={
+                    field.label ? `Enter ${field.label.toLowerCase()}` : "Value"
+                  }
+                  type={field.type === "number" ? "number" : "text"}
+                  className="flex-1"
+                />
+              )}
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8 shrink-0 text-destructive"
+                onClick={() =>
+                  setCustomFields((prev) => prev.filter((_, j) => j !== i))
+                }
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+              </Button>
+            </div>
           </div>
         ))}
       </div>

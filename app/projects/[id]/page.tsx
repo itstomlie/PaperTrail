@@ -43,6 +43,7 @@ export default async function ProjectDetailPage({
       project={{
         ...project,
         customFieldTemplates,
+        citationStyle: project.citationStyle,
       }}
       resources={resources}
       allTags={allTags}

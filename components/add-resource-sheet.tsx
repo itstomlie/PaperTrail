@@ -1,7 +1,15 @@
 "use client";
 
 import * as React from "react";
-import { Search, Loader2, Plus, Trash2, ImageIcon, Upload } from "lucide-react";
+import {
+  Search,
+  Loader2,
+  Plus,
+  Trash2,
+  ImageIcon,
+  Upload,
+  Link2,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -27,6 +35,12 @@ interface AddResourceSheetProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onResourceAdded: () => void;
+  customFieldTemplates?: {
+    key: string;
+    label: string;
+    type: string;
+    options?: string[];
+  }[];
 }
 
 export function AddResourceSheet({
@@ -34,6 +48,7 @@ export function AddResourceSheet({
   open,
   onOpenChange,
   onResourceAdded,
+  customFieldTemplates = [],
 }: AddResourceSheetProps) {
   const [resourceType, setResourceType] = React.useState<ResourceType>("paper");
   const [smartInput, setSmartInput] = React.useState("");
@@ -51,8 +66,13 @@ export function AddResourceSheet({
 
   // Custom fields
   const [customFields, setCustomFields] = React.useState<
-    { key: string; value: string }[]
+    { key: string; value: string; type?: string; label?: string }[]
   >([]);
+
+  // Additional links
+  const [links, setLinks] = React.useState<{ label: string; url: string }[]>(
+    [],
+  );
 
   const smartInputRef = React.useRef<HTMLInputElement>(null);
 
@@ -68,6 +88,7 @@ export function AddResourceSheet({
     setImageUrl("");
     setUploadingImage(false);
     setCustomFields([]);
+    setLinks([]);
   };
 
   // Listen for global paste event from the project detail page
@@ -100,6 +121,21 @@ export function AddResourceSheet({
     prevSmartInput.current = smartInput;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [smartInput, open]);
+
+  // Pre-populate custom field templates when sheet opens
+  React.useEffect(() => {
+    if (open && customFieldTemplates.length > 0 && customFields.length === 0) {
+      setCustomFields(
+        customFieldTemplates.map((t) => ({
+          key: t.key,
+          value: "",
+          type: t.type,
+          label: t.label,
+        })),
+      );
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
 
   const handleImagePaste = async (e: React.ClipboardEvent) => {
     const items = e.clipboardData?.items;
@@ -192,6 +228,9 @@ export function AddResourceSheet({
     const typeFields: Record<string, unknown> = {};
     if (authors) typeFields.authors = authors;
     if (resourceType === "image") typeFields.imageUrl = imageUrl || url;
+    // Include links
+    const filteredLinks = links.filter((l) => l.url.trim());
+    if (filteredLinks.length > 0) typeFields.links = filteredLinks;
 
     const cfObj: Record<string, string> = {};
     for (const f of customFields) {
@@ -240,6 +279,14 @@ export function AddResourceSheet({
       prev.map((f, i) => (i === index ? { ...f, [field]: val } : f)),
     );
   };
+
+  const addLink = () => setLinks((prev) => [...prev, { label: "", url: "" }]);
+  const removeLink = (index: number) =>
+    setLinks((prev) => prev.filter((_, i) => i !== index));
+  const updateLink = (index: number, field: "label" | "url", value: string) =>
+    setLinks((prev) =>
+      prev.map((l, i) => (i === index ? { ...l, [field]: value } : l)),
+    );
 
   return (
     <Sheet
@@ -363,6 +410,49 @@ export function AddResourceSheet({
             />
           </div>
 
+          {/* Additional Links */}
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <Label className="text-xs flex items-center gap-1">
+                <Link2 className="h-3 w-3" />
+                Additional Links
+              </Label>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-6 px-1.5 text-xs gap-1"
+                onClick={addLink}
+              >
+                <Plus className="h-3 w-3" />
+                Add
+              </Button>
+            </div>
+            {links.map((link, i) => (
+              <div key={i} className="flex gap-1.5 items-center">
+                <Input
+                  value={link.label}
+                  onChange={(e) => updateLink(i, "label", e.target.value)}
+                  placeholder="Label"
+                  className="h-7 text-xs w-24"
+                />
+                <Input
+                  value={link.url}
+                  onChange={(e) => updateLink(i, "url", e.target.value)}
+                  placeholder="https://..."
+                  className="h-7 text-xs flex-1"
+                />
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-6 w-6 shrink-0"
+                  onClick={() => removeLink(i)}
+                >
+                  <Trash2 className="h-3 w-3" />
+                </Button>
+              </div>
+            ))}
+          </div>
+
           {/* Authors — show for paper, article, book */}
           {(resourceType === "paper" ||
             resourceType === "article" ||
@@ -406,29 +496,55 @@ export function AddResourceSheet({
               </Button>
             </div>
             {customFields.map((cf, i) => (
-              <div key={i} className="flex gap-1.5 items-center">
-                <Input
-                  value={cf.key}
-                  onChange={(e) => updateCustomField(i, "key", e.target.value)}
-                  placeholder="Field name"
-                  className="h-7 text-xs flex-1"
-                />
-                <Input
-                  value={cf.value}
-                  onChange={(e) =>
-                    updateCustomField(i, "value", e.target.value)
-                  }
-                  placeholder="Value"
-                  className="h-7 text-xs flex-1"
-                />
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-6 w-6 shrink-0"
-                  onClick={() => removeCustomField(i)}
-                >
-                  <Trash2 className="h-3 w-3" />
-                </Button>
+              <div key={i} className="space-y-1">
+                {cf.label ? (
+                  <Label className="text-xs text-muted-foreground">
+                    {cf.label}
+                  </Label>
+                ) : null}
+                <div className="flex gap-1.5 items-start">
+                  {!cf.label && (
+                    <Input
+                      value={cf.key}
+                      onChange={(e) =>
+                        updateCustomField(i, "key", e.target.value)
+                      }
+                      placeholder="Field name"
+                      className="h-7 text-xs flex-1"
+                    />
+                  )}
+                  {cf.type === "long_text" ? (
+                    <Textarea
+                      value={cf.value}
+                      onChange={(e) =>
+                        updateCustomField(i, "value", e.target.value)
+                      }
+                      placeholder="Enter text..."
+                      rows={3}
+                      className="text-xs flex-1"
+                    />
+                  ) : (
+                    <Input
+                      value={cf.value}
+                      onChange={(e) =>
+                        updateCustomField(i, "value", e.target.value)
+                      }
+                      placeholder={
+                        cf.label ? `Enter ${cf.label.toLowerCase()}` : "Value"
+                      }
+                      type={cf.type === "number" ? "number" : "text"}
+                      className="h-7 text-xs flex-1"
+                    />
+                  )}
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-6 w-6 shrink-0"
+                    onClick={() => removeCustomField(i)}
+                  >
+                    <Trash2 className="h-3 w-3" />
+                  </Button>
+                </div>
               </div>
             ))}
           </div>

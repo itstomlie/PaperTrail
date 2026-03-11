@@ -85,7 +85,7 @@ RULES:
 ${styleInstruction}`;
 
     const completion = await openai.chat.completions.create({
-      model: "gpt-4o",
+      model: "gpt-5-mini",
       messages: [
         { role: "system", content: systemPrompt },
         {
@@ -94,7 +94,6 @@ ${styleInstruction}`;
         },
       ],
       temperature: 0.1,
-      max_tokens: 500,
     });
 
     const citation =

@@ -260,6 +260,7 @@ export default function ProjectSettingsPage() {
                       </SelectTrigger>
                       <SelectContent>
                         <SelectItem value="text">Text</SelectItem>
+                        <SelectItem value="long_text">Long Text</SelectItem>
                         <SelectItem value="number">Number</SelectItem>
                         <SelectItem value="url">URL</SelectItem>
                         <SelectItem value="select">Select</SelectItem>
