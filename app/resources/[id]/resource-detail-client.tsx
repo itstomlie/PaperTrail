@@ -202,6 +202,8 @@ export function ResourceDetailClient({ resource, allResources, defaultCitationSt
     }
 
     // Now format
+    if (!ref) return;
+
     setFormattingFormat(fmt);
     try {
       const { Cite } = await import("@citation-js/core");
