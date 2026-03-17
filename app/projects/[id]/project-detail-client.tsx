@@ -6,6 +6,8 @@ import { useRouter } from "next/navigation";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { AddResourceSheet } from "@/components/add-resource-sheet";
+import { KanbanBoardView } from "@/components/resource-views/kanban-board-view";
+import { SummaryFeedView } from "@/components/resource-views/summary-feed-view";
 import {
   Plus,
   ArrowUpDown,
@@ -14,6 +16,7 @@ import {
   LayoutGrid,
   List,
   Columns3,
+  LayoutList,
   ExternalLink,
   BookOpen,
   Users,
@@ -74,7 +77,7 @@ interface ColumnDef {
 
 const ALL_COLUMNS: ColumnDef[] = [
   { key: "starred", label: "Fav", defaultVisible: true },
-  { key: "used", label: "Used", defaultVisible: true },
+  { key: "status", label: "Status", defaultVisible: true },
   { key: "type", label: "Type", defaultVisible: true },
   { key: "title", label: "Title", defaultVisible: true },
   { key: "details", label: "Details", defaultVisible: true },
@@ -117,7 +120,7 @@ interface ResourceItem {
   tags: Tag[];
   customFields: Record<string, unknown>;
   createdAt: string | Date;
-  used?: boolean;
+  status: string;
   starred?: boolean;
 }
 
@@ -154,10 +157,10 @@ export function ProjectDetailClient({ project, resources, allTags }: Props) {
   const [typeFilter, setTypeFilter] = React.useState<string>("all");
   const [sortField, setSortField] = React.useState<string>("createdAt");
   const [sortDir, setSortDir] = React.useState<"asc" | "desc">("desc");
-  const [viewMode, setViewMode] = React.useState<"table" | "gallery">(() => {
+  const [viewMode, setViewMode] = React.useState<"table" | "board" | "split" | "summary">(() => {
     if (typeof window === "undefined") return "table";
     return (
-      (localStorage.getItem("papertrail-view-mode") as "table" | "gallery") ||
+      (localStorage.getItem("papertrail-view-mode") as "table" | "board" | "split" | "summary") ||
       "table"
     );
   });
@@ -168,36 +171,36 @@ export function ProjectDetailClient({ project, resources, allTags }: Props) {
     React.useState<ResourceItem | null>(null);
   const [showAddSheet, setShowAddSheet] = React.useState(false);
 
-  // Used status tracking
-  const [usedMap, setUsedMap] = React.useState<Record<string, boolean>>(() => {
-    const map: Record<string, boolean> = {};
+  // Status tracking
+  const [statusMap, setStatusMap] = React.useState<Record<string, string>>(() => {
+    const map: Record<string, string> = {};
     resources.forEach((r) => {
-      map[r.id] = r.used ?? false;
+      map[r.id] = r.status || "backlog";
     });
     return map;
   });
 
-  const toggleUsed = async (resourceId: string, e: React.MouseEvent) => {
-    e.stopPropagation();
-    const newVal = !usedMap[resourceId];
-    setUsedMap((prev) => ({ ...prev, [resourceId]: newVal }));
+  const updateStatus = async (resourceId: string, newStatus: string) => {
+    const oldStatus = statusMap[resourceId];
+    if (oldStatus === newStatus) return;
+    setStatusMap((prev) => ({ ...prev, [resourceId]: newStatus }));
     try {
-      const res = await fetch("/api/project-resources/toggle-used", {
+      const res = await fetch("/api/project-resources/update-status", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           projectId: project.id,
           resourceId,
-          used: newVal,
+          status: newStatus,
         }),
       });
       if (!res.ok) {
-        setUsedMap((prev) => ({ ...prev, [resourceId]: !newVal }));
-        toast.error("Failed to toggle used status");
+        setStatusMap((prev) => ({ ...prev, [resourceId]: oldStatus }));
+        toast.error("Failed to update status");
       }
     } catch {
-      setUsedMap((prev) => ({ ...prev, [resourceId]: !newVal }));
-      toast.error("Failed to toggle used status");
+      setStatusMap((prev) => ({ ...prev, [resourceId]: oldStatus }));
+      toast.error("Failed to update status");
     }
   };
 
@@ -237,7 +240,7 @@ export function ProjectDetailClient({ project, resources, allTags }: Props) {
   };
 
   // Persist view mode
-  const handleViewMode = (mode: "table" | "gallery") => {
+  const handleViewMode = (mode: "table" | "board" | "split" | "summary") => {
     setViewMode(mode);
     localStorage.setItem("papertrail-view-mode", mode);
   };
@@ -327,8 +330,8 @@ export function ProjectDetailClient({ project, resources, allTags }: Props) {
         case "starred":
           cmp = (starredMap[a.id] ? 1 : 0) - (starredMap[b.id] ? 1 : 0);
           break;
-        case "used":
-          cmp = (usedMap[a.id] ? 1 : 0) - (usedMap[b.id] ? 1 : 0);
+        case "status":
+          cmp = (statusMap[a.id] || "backlog").localeCompare(statusMap[b.id] || "backlog");
           break;
         case "type":
           cmp = a.resourceType.localeCompare(b.resourceType);
@@ -360,7 +363,7 @@ export function ProjectDetailClient({ project, resources, allTags }: Props) {
       return sortDir === "asc" ? cmp : -cmp;
     });
     return result;
-  }, [resources, typeFilter, search, sortField, sortDir, usedMap, starredMap]);
+  }, [resources, typeFilter, search, sortField, sortDir, statusMap, starredMap]);
 
   const toggleSort = (field: string) => {
     if (sortField === field) setSortDir(sortDir === "asc" ? "desc" : "asc");
@@ -539,18 +542,74 @@ export function ProjectDetailClient({ project, resources, allTags }: Props) {
             size="icon"
             className="h-8 w-8 rounded-none rounded-l-md"
             onClick={() => handleViewMode("table")}
+            title="Table View"
           >
             <List className="h-4 w-4" />
           </Button>
           <Button
-            variant={viewMode === "gallery" ? "secondary" : "ghost"}
+            variant={viewMode === "board" ? "secondary" : "ghost"}
             size="icon"
-            className="h-8 w-8 rounded-none rounded-r-md"
-            onClick={() => handleViewMode("gallery")}
+            className="h-8 w-8 rounded-none"
+            onClick={() => handleViewMode("board")}
+            title="Kanban Board View"
           >
             <LayoutGrid className="h-4 w-4" />
           </Button>
+          <Button
+            variant={viewMode === "split" ? "secondary" : "ghost"}
+            size="icon"
+            className="h-8 w-8 rounded-none"
+            onClick={() => handleViewMode("split")}
+            title="Split Reader View"
+          >
+            <Columns3 className="h-4 w-4" />
+          </Button>
+          <Button
+            variant={viewMode === "summary" ? "secondary" : "ghost"}
+            size="icon"
+            className="h-8 w-8 rounded-none rounded-r-md"
+            onClick={() => handleViewMode("summary")}
+            title="Summary Feed View"
+          >
+            <LayoutList className="h-4 w-4" />
+          </Button>
         </div>
+
+        {/* Sort dropdown for clear visibility in non-table views */}
+        {viewMode !== "table" && (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="outline" size="sm" className="gap-1.5">
+                <ArrowUpDown className="h-4 w-4" />
+                Sort
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-48">
+              <DropdownMenuLabel>Sort by</DropdownMenuLabel>
+              <DropdownMenuSeparator />
+              {[
+                { key: "added", label: "Added Date" },
+                { key: "title", label: "Title" },
+                { key: "type", label: "Resource Type" },
+                { key: "status", label: "Status" },
+              ].map((opt) => (
+                <DropdownMenuCheckboxItem
+                  key={opt.key}
+                  checked={sortField === opt.key}
+                  onCheckedChange={() => toggleSort(opt.key)}
+                  className="flex justify-between"
+                >
+                  <span>{opt.label}</span>
+                  {sortField === opt.key && (
+                    <span className="text-xs text-muted-foreground ml-4">
+                      {sortDir === "asc" ? "Asc" : "Desc"}
+                    </span>
+                  )}
+                </DropdownMenuCheckboxItem>
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        )}
 
         {/* Column visibility dropdown */}
         <DropdownMenu>
@@ -596,9 +655,9 @@ export function ProjectDetailClient({ project, resources, allTags }: Props) {
                     <SortHeader field="starred" label="" />
                   </TableHead>
                 )}
-                {isCol("used") && (
-                  <TableHead className="w-10">
-                    <SortHeader field="used" label="Used" />
+                {isCol("status") && (
+                  <TableHead className="w-28 text-center">
+                    <SortHeader field="status" label="Status" />
                   </TableHead>
                 )}
                 {isCol("type") && (
@@ -676,20 +735,21 @@ export function ProjectDetailClient({ project, resources, allTags }: Props) {
                         </button>
                       </TableCell>
                     )}
-                    {isCol("used") && (
-                      <TableCell>
-                        <button
-                          onClick={(e) => toggleUsed(resource.id, e)}
-                          className={`h-4 w-4 rounded border flex items-center justify-center transition-colors ${
-                            usedMap[resource.id]
-                              ? "bg-primary border-primary text-primary-foreground"
-                              : "border-muted-foreground/30 hover:border-muted-foreground/60"
-                          }`}
+                    {isCol("status") && (
+                      <TableCell align="center">
+                        <Badge
+                          variant={statusMap[resource.id] === 'core' ? 'default' : 'secondary'}
+                          className="capitalize cursor-pointer w-[90px] justify-center text-center font-medium shadow-none hover:opacity-80"
+                          title="Click to change status"
+                          onClick={(e) => {
+                             e.stopPropagation();
+                             const current = statusMap[resource.id] || "backlog";
+                             const next = current === 'backlog' ? 'reading' : current === 'reading' ? 'core' : current === 'core' ? 'archived' : 'backlog';
+                             updateStatus(resource.id, next);
+                          }}
                         >
-                          {usedMap[resource.id] && (
-                            <Check className="h-3 w-3" />
-                          )}
-                        </button>
+                          {statusMap[resource.id] || "backlog"}
+                        </Badge>
                       </TableCell>
                     )}
                     {isCol("type") && (
@@ -785,100 +845,115 @@ export function ProjectDetailClient({ project, resources, allTags }: Props) {
             </TableBody>
           </Table>
         </div>
-      ) : (
-        /* ──── Gallery View ──── */
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-          {filteredResources.map((resource) => {
-            const m = TYPE_META[resource.resourceType as ResourceType];
-            const tf = getTypeFields<Record<string, unknown>>(
-              resource.typeFields,
-            );
-            const isImage = resource.resourceType === "image";
-            const imageUrl = isImage
-              ? (tf.imageUrl as string) || resource.url
-              : null;
-
-            return (
-              <Card
-                key={resource.id}
-                className={`cursor-pointer transition-all hover:shadow-md hover:border-primary/30 overflow-hidden relative ${
-                  starredMap[resource.id] ? "border-yellow-500/50" : ""
-                }`}
-                onClick={() => setSelectedResource(resource)}
-              >
-                <div
-                  className="absolute top-1 right-1 z-10 p-1.5 rounded-full bg-background/80 hover:bg-background shadow-sm backdrop-blur border text-muted-foreground hover:text-yellow-500 transition-colors"
-                  onClick={(e) => toggleStarred(resource.id, e)}
-                >
-                  <Star
-                    className="h-3.5 w-3.5"
-                    fill={starredMap[resource.id] ? "rgb(234 179 8)" : "none"}
-                    color={
-                      starredMap[resource.id]
-                        ? "rgb(234 179 8)"
-                        : "currentColor"
-                    }
-                  />
-                </div>
-                {/* Image preview for image resources */}
-                {imageUrl && (
-                  <div className="h-28 bg-muted overflow-hidden">
-                    <img
-                      src={imageUrl}
-                      alt={resource.title}
-                      className="h-full w-full object-cover"
-                    />
-                  </div>
-                )}
-                {/* Slim color bar for non-image resources */}
-                {!imageUrl && (
-                  <div
-                    className="h-1"
-                    style={{ backgroundColor: m?.color || "#888" }}
-                  />
-                )}
-                <CardContent className="p-3 space-y-1.5">
-                  {/* Title + URL icon */}
-                  <div className="flex items-start gap-1.5">
-                    {m && (
-                      <m.icon
-                        className="h-3.5 w-3.5 mt-0.5 shrink-0"
-                        style={{ color: m.color }}
-                      />
-                    )}
-                    <h3 className="font-medium text-sm leading-tight line-clamp-2 flex-1">
-                      {resource.title}
-                    </h3>
-                    {resource.url && (
-                      <a
-                        href={resource.url}
-                        target="_blank"
-                        rel="noopener"
-                        className="text-muted-foreground hover:text-blue-500 shrink-0 mt-0.5"
-                        onClick={(e) => e.stopPropagation()}
-                        title="Open page"
+      ) : viewMode === "board" ? (
+        <KanbanBoardView
+          resources={filteredResources.map(r => ({...r, status: statusMap[r.id] || "backlog"}))}
+          onStatusChange={updateStatus}
+          onResourceClick={setSelectedResource}
+        />
+      ) : viewMode === "summary" ? (
+        <SummaryFeedView
+          resources={filteredResources.map(r => ({...r, status: statusMap[r.id] || "backlog"}))}
+          onResourceClick={setSelectedResource}
+        />
+      ) : viewMode === "split" ? (
+        <div className="flex gap-6 h-[calc(100vh-12rem)] min-h-[600px] border rounded-lg overflow-hidden relative shadow-sm">
+          {/* Left Pane - List */}
+          <div className="w-1/3 min-w-[320px] max-w-[400px] border-r overflow-y-auto bg-muted/20 p-4 space-y-3">
+            {filteredResources.map(r => {
+                const m = TYPE_META[r.resourceType as ResourceType];
+                const active = selectedResource?.id === r.id;
+                const rStatus = statusMap[r.id] || "backlog";
+                const isCore = rStatus === "core";
+                
+                return (
+                  <div 
+                    key={r.id} 
+                    onClick={() => setSelectedResource(r)}
+                    className={`p-3.5 rounded-xl cursor-pointer border shadow-sm transition-all ${active ? 'bg-primary/5 border-primary shadow-md ring-1 ring-primary/20' : 'bg-background hover:border-primary/40'}`}
+                  >
+                    <div className="font-semibold text-sm leading-snug line-clamp-2">{r.title}</div>
+                    <div className="flex flex-wrap items-center gap-2 mt-2.5 text-xs">
+                      {m && <div className="flex items-center gap-1 font-medium" style={{color: m.color}}><m.icon className="h-3.5 w-3.5" />{m.label}</div>}
+                      <span className="text-muted-foreground/30">•</span>
+                      <Badge 
+                        variant={isCore ? 'default' : 'secondary'} 
+                        className={`capitalize text-[10px] h-4 px-1.5 cursor-pointer hover:opacity-80 transition-opacity ${isCore ? '' : 'bg-muted border-none text-muted-foreground'}`}
+                        title="Click to change status"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          const next = rStatus === 'backlog' ? 'reading' : rStatus === 'reading' ? 'core' : rStatus === 'core' ? 'archived' : 'backlog';
+                          updateStatus(r.id, next);
+                        }}
                       >
-                        <ExternalLink className="h-3 w-3" />
-                      </a>
-                    )}
+                        {rStatus}
+                      </Badge>
+                      {starredMap[r.id] && (
+                        <>
+                          <span className="text-muted-foreground/30">•</span>
+                          <Star className="h-3 w-3 text-yellow-500" fill="currentColor" />
+                        </>
+                      )}
+                    </div>
                   </div>
-
-                  {/* Notes preview */}
-                  {resource.notes && (
-                    <p className="text-xs text-muted-foreground line-clamp-2">
-                      {resource.notes}
-                    </p>
-                  )}
-                </CardContent>
-              </Card>
-            );
-          })}
+                )
+            })}
+            {filteredResources.length === 0 && (
+              <div className="text-center text-sm text-muted-foreground p-8">No resources match your filters</div>
+            )}
+          </div>
+          {/* Right Pane - Detail */}
+          <div className="flex-1 overflow-y-auto bg-background relative border-l shadow-[-4px_0_12px_rgba(0,0,0,0.02)]">
+             {selectedResource ? (
+                <div className="p-8 max-w-3xl mx-auto pb-24">
+                   {selectedResource.resourceType === "image" && (() => {
+                     const tf = getTypeFields<Record<string, unknown>>(selectedResource.typeFields);
+                     return tf.imageUrl ? (
+                       <div className="mb-8 overflow-hidden rounded-lg border bg-muted">
+                         <img 
+                           src={String(tf.imageUrl)} 
+                           alt={String(tf.altText || selectedResource.title)} 
+                           className="w-full object-contain max-h-[400px]"
+                         />
+                       </div>
+                     ) : null;
+                   })()}
+                   <ResourceSidebar
+                    resource={selectedResource}
+                    project={project}
+                    citationStyle={project.citationStyle}
+                    onNavigate={() => {
+                      router.push(`/resources/${selectedResource.id}`);
+                      setSelectedResource(null);
+                    }}
+                    onUpdate={async (id, updates) => {
+                      setSelectedResource((prev) => prev && prev.id === id ? { ...prev, ...updates } : prev);
+                      try {
+                        const res = await fetch(`/api/resources/${id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(updates) });
+                        if (!res.ok) throw new Error();
+                        router.refresh();
+                      } catch {
+                        toast.error("Failed to save changes");
+                        router.refresh();
+                      }
+                    }}
+                    onDelete={handleDeleteResource}
+                   />
+                </div>
+             ) : (
+                <div className="h-full flex flex-col items-center justify-center text-muted-foreground p-8 bg-muted/5">
+                   <BookOpen className="h-16 w-16 opacity-10 mb-6" />
+                   <p className="font-medium text-lg text-foreground/70">No resource selected</p>
+                   <p className="text-sm mt-1 max-w-xs text-center">Select a resource from the list on the left to view its details, fields, and take notes.</p>
+                </div>
+             )}
+          </div>
         </div>
-      )}
+      ) : null}
 
       {/* ──── Resource Detail Sidebar (Sheet) ──── */}
       <Sheet
-        open={!!selectedResource}
+        open={!!selectedResource && viewMode !== "split"}
         onOpenChange={(open) => {
           if (!open) setSelectedResource(null);
         }}
@@ -888,8 +963,11 @@ export function ProjectDetailClient({ project, resources, allTags }: Props) {
           className="sm:max-w-lg w-full overflow-y-auto"
         >
           {selectedResource && (
-            <ResourceSidebar
-              resource={selectedResource}
+            <>
+              <SheetTitle className="sr-only">{selectedResource.title}</SheetTitle>
+              <SheetDescription className="sr-only">Resource details for {selectedResource.title}</SheetDescription>
+              <ResourceSidebar
+                resource={selectedResource}
               project={project}
               citationStyle={project.citationStyle}
               onNavigate={() => {
@@ -918,6 +996,7 @@ export function ProjectDetailClient({ project, resources, allTags }: Props) {
               }}
               onDelete={handleDeleteResource}
             />
+            </>
           )}
         </SheetContent>
       </Sheet>
@@ -1098,9 +1177,9 @@ function ResourceSidebar({
           </DropdownMenu>
         </div>
         <div className="flex items-center gap-2 mt-2">
-          <SheetTitle className="text-lg leading-tight flex-1">
+          <h2 className="text-lg font-semibold text-foreground leading-tight flex-1">
             {resource.title}
-          </SheetTitle>
+          </h2>
           {resource.url && (
             <a
               href={resource.url}
@@ -1113,9 +1192,6 @@ function ResourceSidebar({
             </a>
           )}
         </div>
-        <SheetDescription className="sr-only">
-          Resource details for {resource.title}
-        </SheetDescription>
       </SheetHeader>
 
       <div className="px-4 pb-6 space-y-5">

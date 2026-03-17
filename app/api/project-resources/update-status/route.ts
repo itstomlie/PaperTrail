@@ -2,11 +2,11 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 
 export async function PATCH(request: Request) {
-  const { projectId, resourceId, used } = await request.json();
+  const { projectId, resourceId, status } = await request.json();
 
-  if (!projectId || !resourceId || typeof used !== "boolean") {
+  if (!projectId || !resourceId || typeof status !== "string") {
     return NextResponse.json(
-      { error: "projectId, resourceId, and used (boolean) are required" },
+      { error: "projectId, resourceId, and status (string) are required" },
       { status: 400 },
     );
   }
@@ -16,7 +16,7 @@ export async function PATCH(request: Request) {
       where: {
         projectId_resourceId: { projectId, resourceId },
       },
-      data: { used },
+      data: { status },
     });
     return NextResponse.json(updated);
   } catch {

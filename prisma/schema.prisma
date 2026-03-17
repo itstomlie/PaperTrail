@@ -51,7 +51,7 @@ model Tag {
 model ProjectResource {
   projectId  String
   resourceId String
-  used       Boolean  @default(false)
+  status     String   @default("backlog") // backlog | reading | core | archived
   starred    Boolean  @default(false)
   project    Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
   resource   Resource @relation(fields: [resourceId], references: [id], onDelete: Cascade)
